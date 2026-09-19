@@ -26,7 +26,7 @@ test('local profile name updates trips, closed trips, exports and other tabs off
   await page.getByLabel('Trip name').fill('Finished trip');
   await page.getByRole('button', { name: 'Create trip', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await page.getByRole('tab', { name: 'Members', exact: true }).click();
+  await page.getByRole('tab', { name: 'Trip details', exact: true }).click();
   await page.getByRole('button', { name: 'Start settling up' }).click();
   await page.getByRole('button', { name: 'Close settled trip' }).click();
   await expect(page.getByRole('button', { name: 'Reopen trip' })).toBeVisible();
@@ -60,7 +60,7 @@ test('local profile name updates trips, closed trips, exports and other tabs off
   await page.reload();
   await expect(page.locator('.profile-button')).toContainText('Robert');
   await page.getByRole('button', { name: 'Lisbon, with love', exact: true }).click();
-  await page.getByRole('tab', { name: 'Members', exact: true }).click();
+  await page.getByRole('tab', { name: 'Trip details', exact: true }).click();
   await expect(page.getByText('Robert (you)', { exact: true })).toBeVisible();
   await expect(page.getByText('Sam', { exact: true }).first()).toBeVisible();
   await context.setOffline(false);
@@ -91,7 +91,7 @@ test('local profile invalid names and storage failures preserve the saved name',
   );
   await page.reload();
   await expect(page.locator('.profile-button')).toContainText('Alex');
-  await page.getByRole('tab', { name: 'Members', exact: true }).click();
+  await page.getByRole('tab', { name: 'Trip details', exact: true }).click();
   await expect(page.getByText('Alex (you)', { exact: true })).toBeVisible();
 });
 
@@ -114,7 +114,7 @@ test('local profile name does not rename another participant in an imported copy
   ).toBeVisible();
   await page.getByRole('button', { name: 'Close dialog' }).click();
   await expect(page.getByText('Local copy · viewing as Alice')).toBeVisible();
-  await page.getByRole('tab', { name: 'Members', exact: true }).click();
+  await page.getByRole('tab', { name: 'Trip details', exact: true }).click();
   await expect(page.getByText('Alice (you)', { exact: true })).toBeVisible();
 });
 
@@ -123,7 +123,9 @@ test('trip details can be edited offline, cancelled and exported with history', 
   context,
 }) => {
   await page.goto('/');
-  await page.getByRole('tab', { name: 'Members' }).click();
+  await page.getByRole('tab', { name: 'Trip details' }).click();
+  await expect(page.getByRole('heading', { name: 'Members', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Trip settings', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Edit trip details', exact: true }).click();
   await expect(page.getByLabel('Trip name', { exact: true })).toHaveValue('Lisbon, with love');
   await expect(page.getByLabel('Settle in', { exact: true })).toBeDisabled();
@@ -170,12 +172,12 @@ test('trip detail forms preserve concurrent edits to unrelated fields', async ({
   context,
 }) => {
   await page.goto('/');
-  await page.getByRole('tab', { name: 'Members' }).click();
+  await page.getByRole('tab', { name: 'Trip details' }).click();
   await page.getByRole('button', { name: 'Edit trip details', exact: true }).click();
   await page.getByLabel('Trip name', { exact: true }).fill('Concurrent reunion');
   const second = await context.newPage();
   await second.goto('/');
-  await second.getByRole('tab', { name: 'Members' }).click();
+  await second.getByRole('tab', { name: 'Trip details' }).click();
   await second.getByRole('button', { name: 'Edit trip details', exact: true }).click();
   await second.getByLabel(/A little about the trip/).fill('Keep this description');
   await second.getByRole('button', { name: 'Save changes', exact: true }).click();
@@ -587,7 +589,7 @@ test('trip deletion requires confirmation, supports export and stays deleted off
   context,
 }) => {
   await page.goto('/');
-  await page.getByRole('tab', { name: 'Members' }).click();
+  await page.getByRole('tab', { name: 'Trip details' }).click();
   await page.getByRole('button', { name: 'Delete trip', exact: true }).click();
   const dialog = page.getByRole('dialog');
   const confirm = dialog.getByRole('button', { name: 'Delete trip', exact: true });
@@ -727,7 +729,7 @@ test('local trip, exact validation, expense edits, payments, export and persiste
     .getByRole('button', { name: 'Record payment', exact: true })
     .click();
   await expect(page.getByRole('heading', { name: 'Nothing left to settle' })).toBeVisible();
-  await page.getByRole('tab', { name: 'Members' }).click();
+  await page.getByRole('tab', { name: 'Trip details' }).click();
   await page.getByRole('button', { name: 'Start settling up' }).click();
   await page.getByRole('button', { name: 'Close settled trip' }).click();
   await expect(
@@ -860,7 +862,7 @@ test('offline cloud expenses and trip deletion synchronize after reconnecting', 
         }),
       );
   });
-  await page.getByRole('tab', { name: 'Members', exact: true }).click();
+  await page.getByRole('tab', { name: 'Trip details', exact: true }).click();
   await context.setOffline(true);
   await page.getByRole('button', { name: 'Delete trip', exact: true }).click();
   await page.getByLabel('Type the trip name to confirm').fill('Weekend Cabin');
@@ -1144,7 +1146,7 @@ test('Cloudflare accounts, privacy, friendship, invites, concurrent edits and tr
       .click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await page.getByRole('button', { name: 'Shared cabin', exact: true }).first().click();
-    await page.getByRole('tab', { name: 'Members', exact: true }).click();
+    await page.getByRole('tab', { name: 'Trip details', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Edit trip details', exact: true })).toHaveCount(
       0,
     );

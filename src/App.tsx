@@ -816,7 +816,7 @@ export default function App() {
                     ['balances', Wallet, 'Balances'],
                     ['settle', CheckCheck, 'Settle up'],
                     ['activity', History, 'Activity'],
-                    ['members', Users, 'Members'],
+                    ['members', Users, 'Trip details'],
                   ] as const
                 ).map(([id, Icon, label]) => (
                   <button
@@ -1259,7 +1259,7 @@ export default function App() {
                     <div className="panel">
                       <div className="section-heading">
                         <div>
-                          <h2>The people make the trip</h2>
+                          <h2>Members</h2>
                           <p>{currentMembers.length} travelers, one shared adventure.</p>
                         </div>
                         {organizer && !closed && (
