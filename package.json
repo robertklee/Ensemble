@@ -1,0 +1,40 @@
+{
+  "name": "ensemble",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "assets:icons": "node scripts/generate-icons.mjs",
+    "cf:dev": "npm run build && wrangler pages dev dist",
+    "db:local": "wrangler d1 migrations apply ensemble --local",
+    "db:remote": "wrangler d1 migrations apply ensemble --remote",
+    "deploy": "npm run build && wrangler pages deploy dist --project-name ensemble"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260915.1",
+    "@playwright/test": "^1.51.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "fast-check": "^3.23.2",
+    "prettier": "^3.9.6",
+    "typescript": "~5.7.2",
+    "vite": "^6.0.5",
+    "vitest": "^3.0.5",
+    "wrangler": "^4.0.0"
+  }
+}
