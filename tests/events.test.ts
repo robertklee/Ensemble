@@ -5,6 +5,40 @@ import { balances } from '../shared/money';
 import { expense, fixture, withEvent } from './fixtures';
 
 describe('immutable event projection and validation', () => {
+  it('renames only the acting member without changing financial history, even in closed trips', () => {
+    let state = fixture();
+    state = withEvent(state, { kind: 'expense.add', expense: expense(state) });
+    const before = structuredClone(state);
+    const rename = makeEvent(state.trip.id, 'u0', { kind: 'member.rename', name: 'Robert' });
+    expect(() => validateEvent(rename, state)).not.toThrow();
+    const renamed = project([...state.events, rename]);
+    expect(renamed.trip.members[0].name).toBe('Robert');
+    expect(renamed.trip.members.slice(1)).toEqual(before.trip.members.slice(1));
+    expect(renamed.expenses).toEqual(before.expenses);
+    expect(balances(renamed)).toEqual(balances(before));
+    expect(state).toEqual(before);
+    expect(eventLabel(rename, (id) => id)).toBe('changed their name to Robert');
+    let closed = withEvent(fixture(), { kind: 'trip.status', status: 'settling' });
+    closed = withEvent(closed, { kind: 'trip.status', status: 'closed' });
+    expect(() => validateEvent(rename, closed)).not.toThrow();
+    const deleted = withEvent(closed, { kind: 'trip.delete' });
+    expect(() => validateEvent(rename, deleted)).toThrow('deleted');
+  });
+
+  it('rejects invalid names and renames by placeholders or outsiders', () => {
+    const state = fixture();
+    for (const name of ['', '   ', 'x'.repeat(61)]) {
+      expect(() =>
+        validateEvent(makeEvent(state.trip.id, 'u0', { kind: 'member.rename', name }), state),
+      ).toThrow('Your name');
+    }
+    for (const actor of ['u1', 'outsider']) {
+      const change = makeEvent(state.trip.id, actor, { kind: 'member.rename', name: 'Robert' });
+      expect(() => validateEvent(change, state)).toThrow('Only current members');
+      expect(() => validateEvent(change, state, true)).toThrow('Only current members');
+    }
+  });
+
   it('edits trip metadata without changing identity, membership or finances', () => {
     let state = fixture();
     state = withEvent(state, { kind: 'expense.add', expense: expense(state) });

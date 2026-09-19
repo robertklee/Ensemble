@@ -89,6 +89,7 @@ export type EventData =
   | { kind: 'trip.status'; status: TripStatus }
   | { kind: 'trip.delete' }
   | { kind: 'member.add'; member: Member }
+  | { kind: 'member.rename'; name: string }
   | { kind: 'member.leave'; userId: string }
   | { kind: 'member.claim'; ghostId: string; user: User }
   | { kind: 'expense.add'; expense: Expense }

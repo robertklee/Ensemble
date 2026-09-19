@@ -64,6 +64,9 @@ export function project(events: TripEvent[]): TripState {
       case 'member.leave':
         state.trip.members.find((m) => m.id === event.userId)!.left = true;
         break;
+      case 'member.rename':
+        state.trip.members.find((m) => m.id === event.actor)!.name = event.name;
+        break;
       case 'member.claim': {
         const ghost = state.trip.members.find((m) => m.id === event.ghostId)!;
         const existing = state.trip.members.find((m) => m.id === event.user.id);
@@ -316,6 +319,11 @@ export function validateEvent(
       );
     return;
   }
+  if (event.kind === 'member.rename') {
+    assert(actor, 'Only current members can change their name.');
+    text(event.name, 'Your name', 60);
+    return;
+  }
   assert(current.trip.status !== 'closed', 'Reopen this trip before making changes.');
   switch (event.kind) {
     case 'trip.edit': {
@@ -471,6 +479,8 @@ export function eventLabel(event: TripEvent, memberName: (id: string) => string)
       return 'deleted the trip';
     case 'member.add':
       return `added ${event.member.name}`;
+    case 'member.rename':
+      return `changed their name to ${event.name}`;
     case 'member.leave':
       return 'left the trip';
     case 'member.claim':

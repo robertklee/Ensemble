@@ -30,6 +30,7 @@ import {
   dispatch,
   importLocalTrip,
   restoreLocalBackup,
+  updateLocalProfile,
   type Workspace,
 } from './store';
 import { exportBackup, exportCSV } from './export';
@@ -191,6 +192,44 @@ function useSubmit(action: () => Promise<void>) {
   }
   return { busy, error, submit, setError };
 }
+export function LocalProfileForm({
+  workspace,
+  onDone,
+}: {
+  workspace: Workspace;
+  onDone: () => void;
+}) {
+  const [name, setName] = useState(workspace.user.displayName);
+  const { busy, error, submit } = useSubmit(async () => {
+    await updateLocalProfile(name);
+    setName(name.trim());
+    onDone();
+  });
+  return (
+    <form className="form" aria-label="Local profile" onSubmit={submit}>
+      <label>
+        Your name
+        <input
+          required
+          maxLength={60}
+          autoComplete="name"
+          value={name}
+          disabled={busy}
+          onChange={(e) => setName(e.target.value)}
+        />
+      </label>
+      <p className="footnote">
+        Updates your name on this device and in your local trips. Imported copies viewed as another
+        participant keep that participant's name. No cloud account is changed.
+      </p>
+      <ErrorText error={error} />
+      <Submit busy={busy} disabled={name.trim() === workspace.user.displayName}>
+        Save name
+      </Submit>
+    </form>
+  );
+}
+
 export function ImportBackupForm({
   workspace,
   onDone,

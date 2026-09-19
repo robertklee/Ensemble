@@ -49,6 +49,20 @@ function workspace(): Workspace {
 }
 
 describe('individual trip JSON', () => {
+  it('preserves renamed participants in trip copies and full workspace backups', async () => {
+    const original = workspace();
+    const state = withEvent(project(original.events), { kind: 'member.rename', name: 'Robert' });
+    const renamed = {
+      ...original,
+      user: { ...original.user, displayName: 'Robert' },
+      events: state.events,
+    };
+    const restored = await parseBackup(serializeBackup(renamed));
+    expect(restored.workspace).toEqual(renamed);
+    const copied = copyTrip(await parseTripBackup(serializeTrip(state, renamed.user)), 'u0');
+    expect(copied.trip.members[0].name).toBe('Robert');
+    expect(balances(copied)).toEqual(balances(project(original.events)));
+  });
   it('round-trips edited details through trip copies and workspace backups', async () => {
     const original = workspace();
     const state = withEvent(project(original.events), {

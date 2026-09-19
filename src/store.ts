@@ -444,7 +444,23 @@ export async function logout() {
   channel?.postMessage({ key: 'local' });
 }
 export async function updateLocalProfile(displayName: string) {
-  await update((w) => ({ ...w, user: { ...w.user, displayName } }));
+  const name = displayName.trim();
+  if (!name || name.length > 60) throw new Error('Your name must be 1–60 characters.');
+  await update((w) => {
+    if (w.mode !== 'local') throw new Error('Name editing is only available in local mode.');
+    const changes: TripEvent[] = [];
+    for (const state of tripStates(w)) {
+      if (tripMemberId(w, state.trip.id) !== w.user.id) continue;
+      const member = state.trip.members.find((m) => m.id === w.user.id);
+      if (!member || member.isGhost || member.name === name) continue;
+      const event = makeEvent(state.trip.id, w.user.id, { kind: 'member.rename', name });
+      const last = state.events.reduce((max, e) => Math.max(max, Date.parse(e.updatedAt)), 0);
+      event.updatedAt = new Date(Math.max(Date.now(), last + 1)).toISOString();
+      validateEvent(event, state);
+      changes.push(event);
+    }
+    return { ...w, user: { ...w.user, displayName: name }, events: [...w.events, ...changes] };
+  });
 }
 export async function restoreLocalBackup(workspace: Workspace, expected: Workspace) {
   await update((current) => {

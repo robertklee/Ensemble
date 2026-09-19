@@ -5,7 +5,7 @@ import { balances } from '../../shared/money';
 import type { TripEvent, User } from '../../shared/types';
 import { expense, fixture, withEvent } from '../fixtures';
 import type { Workspace } from '../../src/store';
-import { parseTripBackup, serializeTrip } from '../../src/backup';
+import { parseBackup, parseTripBackup, serializeTrip } from '../../src/backup';
 
 const importedWorkspace: Workspace = {
   mode: 'local',
@@ -16,6 +16,107 @@ const importedWorkspace: Workspace = {
   notices: [],
   lastSynced: null,
 };
+
+test('local profile name updates trips, closed trips, exports and other tabs offline', async ({
+  page,
+  context,
+}) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Create a new trip', exact: true }).click();
+  await page.getByLabel('Trip name').fill('Finished trip');
+  await page.getByRole('button', { name: 'Create trip', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('tab', { name: 'Members', exact: true }).click();
+  await page.getByRole('button', { name: 'Start settling up' }).click();
+  await page.getByRole('button', { name: 'Close settled trip' }).click();
+  await expect(page.getByRole('button', { name: 'Reopen trip' })).toBeVisible();
+  const second = await context.newPage();
+  await second.goto('/');
+  await page.getByRole('button', { name: 'Your account' }).click();
+  await expect(page.getByLabel('Your name', { exact: true })).toHaveValue('Alex');
+  await expect(page.getByRole('button', { name: 'Save name', exact: true })).toBeDisabled();
+  await page.getByLabel('Your name', { exact: true }).fill('  Robert  ');
+  await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
+  await context.setOffline(true);
+  await page.getByRole('button', { name: 'Save name', exact: true }).click();
+  await expect(
+    page.getByRole('dialog').getByRole('heading', { name: 'Robert', exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel('Your name', { exact: true })).toHaveValue('Robert');
+  await expect(second.locator('.profile-button')).toContainText('Robert');
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export full JSON backup', exact: true }).click();
+  const restored = await parseBackup(await readFile((await (await download).path())!, 'utf8'));
+  expect(restored.workspace.user.displayName).toBe('Robert');
+  for (const tripId of new Set(restored.workspace.events.map((e) => e.tripId))) {
+    const events = restored.workspace.events.filter((e) => e.tripId === tripId);
+    const state = project(events);
+    expect(state.trip.members.find((m) => m.id === 'local-you')?.name).toBe('Robert');
+    expect(balances(state)).toEqual(
+      balances(project(events.filter((e) => e.kind !== 'member.rename'))),
+    );
+  }
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await page.reload();
+  await expect(page.locator('.profile-button')).toContainText('Robert');
+  await page.getByRole('button', { name: 'Lisbon, with love', exact: true }).click();
+  await page.getByRole('tab', { name: 'Members', exact: true }).click();
+  await expect(page.getByText('Robert (you)', { exact: true })).toBeVisible();
+  await expect(page.getByText('Sam', { exact: true }).first()).toBeVisible();
+  await context.setOffline(false);
+  await second.close();
+});
+
+test('local profile invalid names and storage failures preserve the saved name', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Your account' }).click();
+  await page.getByLabel('Your name', { exact: true }).fill('   ');
+  await page.getByRole('button', { name: 'Save name', exact: true }).click();
+  await expect(page.getByRole('form', { name: 'Local profile' }).getByRole('alert')).toContainText(
+    '1–60 characters',
+  );
+  await page.getByLabel('Your name', { exact: true }).fill('Robert');
+  await page.evaluate(() => {
+    const put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (value, key) {
+      if (key === 'local') throw new DOMException('Storage is full.', 'QuotaExceededError');
+      return put.call(this, value, key);
+    };
+  });
+  await page.getByRole('button', { name: 'Save name', exact: true }).click();
+  await expect(page.getByRole('form', { name: 'Local profile' }).getByRole('alert')).toContainText(
+    'Storage is full',
+  );
+  await page.reload();
+  await expect(page.locator('.profile-button')).toContainText('Alex');
+  await page.getByRole('tab', { name: 'Members', exact: true }).click();
+  await expect(page.getByText('Alex (you)', { exact: true })).toBeVisible();
+});
+
+test('local profile name does not rename another participant in an imported copy', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Import trip JSON', exact: true }).first().click();
+  await selectTripFile(
+    page,
+    serializeTrip(project(importedWorkspace.events), importedWorkspace.user),
+  );
+  await page.getByRole('button', { name: 'Import trip', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Your account' }).click();
+  await page.getByLabel('Your name', { exact: true }).fill('Robert');
+  await page.getByRole('button', { name: 'Save name', exact: true }).click();
+  await expect(
+    page.getByRole('dialog').getByRole('heading', { name: 'Robert', exact: true }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(page.getByText('Local copy · viewing as Alice')).toBeVisible();
+  await page.getByRole('tab', { name: 'Members', exact: true }).click();
+  await expect(page.getByText('Alice (you)', { exact: true })).toBeVisible();
+});
 
 test('trip details can be edited offline, cancelled and exported with history', async ({
   page,

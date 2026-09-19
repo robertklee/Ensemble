@@ -92,6 +92,7 @@ const event = z.discriminatedUnion('kind', [
   }),
   z.object({ ...metadata, kind: z.literal('trip.delete') }),
   z.object({ ...metadata, kind: z.literal('member.add'), member }),
+  z.object({ ...metadata, kind: z.literal('member.rename'), name: z.string().min(1).max(60) }),
   z.object({ ...metadata, kind: z.literal('member.leave'), userId: id }),
   z.object({ ...metadata, kind: z.literal('member.claim'), ghostId: id, user }),
   z.object({

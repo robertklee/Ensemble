@@ -73,6 +73,7 @@ import {
   InvitePanel,
   ImportBackupForm,
   ImportTripForm,
+  LocalProfileForm,
   Modal,
   PaymentForm,
   TripForm,
@@ -1636,6 +1637,10 @@ export default function App() {
               </div>
               {workspace.mode === 'local' ? (
                 <>
+                  <LocalProfileForm
+                    workspace={workspace}
+                    onDone={() => setMessage('Your name has been updated.')}
+                  />
                   <div className="info-box">
                     You're trying Ensemble locally. The Lisbon trip is sample data you can edit
                     freely. Create a new trip for your own expenses. Nothing here is shared or
