@@ -12,8 +12,7 @@ export default defineConfig({
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
-    command:
-      'npm run build && npm run db:local && npx wrangler pages dev dist --port 8788 --ip 127.0.0.1',
+    command: 'npm run build && npm run db:local && npx wrangler dev --port 8788 --ip 127.0.0.1',
     url: 'http://127.0.0.1:8788/api/health',
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

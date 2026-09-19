@@ -1,7 +1,14 @@
-# Pages configuration: deploy with npm run deploy, not wrangler deploy.
+# Workers + Static Assets; compatible with Cloudflare's default deploy command.
 name = "ensemble"
+main = "src/worker.ts"
 compatibility_date = "2025-09-13"
-pages_build_output_dir = "./dist"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+html_handling = "none"
+run_worker_first = ["/api", "/api/*"]
 
 [[d1_databases]]
 binding = "DB"

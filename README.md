@@ -3,9 +3,10 @@
 ![Ensemble logo](public/ensemble-logo.svg)
 
 A trip-first expense splitter for friends, built with React, TypeScript and Vite.
-The website runs on **Cloudflare Pages**, its API on **Pages Functions**, and shared
-data in **Cloudflare D1**. No separate application server, payment processor, or
-third-party analytics is required.
+The website and API run on **Cloudflare Workers with Static Assets**, with shared
+data in **Cloudflare D1**. An optional **Pages / Pages Functions** configuration is
+also included. No separate application server, payment processor, or third-party
+analytics is required.
 
 The initial local workspace includes a clearly labeled, editable Lisbon example.
 Use **Create a trip** for your own expenses, or create an account for shared trips.
@@ -66,7 +67,26 @@ reloads. Service workers require HTTPS or localhost and are not registered by th
 Vite development server. Wait for an expense form to finish saving before closing
 or reloading the page.
 
-## Deploy to Cloudflare Pages
+## Deploy to Cloudflare Workers
+
+The default `wrangler.toml` targets **Workers Static Assets**, matching Cloudflare's
+pipeline with separate build and deploy commands:
+
+| Setting        | Value                                       |
+| -------------- | ------------------------------------------- |
+| Root directory | Repository root                             |
+| Build command  | `npm run build`                             |
+| Deploy command | `npm run deploy` (or `npx wrangler deploy`) |
+| `NODE_VERSION` | `22` or newer                               |
+| Dependencies   | `npm ci` using `package-lock.json`          |
+
+`npm run deploy` runs `wrangler deploy`; it expects the build to have already run.
+The configuration publishes `dist`, provides SPA fallback, and routes `/api` and
+`/api/*` to `src/worker.ts` **before** static asset handling. That entry point calls
+the same API handler as Pages Functions, preserving accounts, cookies, invitations,
+shared trips, and D1 access. `public/_headers` continues to apply to static assets.
+
+Unlike a static-only website, Ensemble needs a real D1 database for its API:
 
 1. Authenticate and create your database:
 
@@ -75,79 +95,69 @@ or reloading the page.
    npx wrangler d1 create ensemble
    ```
 
-2. Replace `database_id` in `wrangler.toml` with the UUID printed by that command.
-   Keep the binding name **`DB`**. Database IDs are not credentials; never commit
-   Cloudflare API tokens.
+   If `ensemble` already exists, reuse it rather than creating another database;
+   find its UUID with `npx wrangler d1 info ensemble`.
 
-3. Apply the schema, create the Pages project, and deploy:
+2. Replace the all-zero `database_id` in `wrangler.toml` with the real UUID.
+   Keep the binding name **`DB`**. Database IDs are not credentials; never commit
+   Cloudflare API tokens. The placeholder works locally, **not in production**.
+   Set `name` in `wrangler.toml` to match your Cloudflare Worker project.
+
+3. Apply the schema, build, and deploy:
 
    ```sh
    npm run db:remote
-   npx wrangler pages project create ensemble --production-branch main
+   npm run build
    npm run deploy
    ```
 
-   Skip project creation if the project already exists. Adjust the project name
-   in `package.json` and `wrangler.toml` if `ensemble` is unavailable in your
-   Cloudflare account.
+   Apply subsequent migrations separately before deploying changes that need them.
+   The Workers build token needs access to the Worker and its D1 binding. A separate
+   CI runner needs `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` configured as
+   secrets; migration commands also require D1 edit permission.
 
 4. Open the deployment URL printed by Wrangler. Create an account, create a trip,
    and use **Invite a friend** to add accepted friends or generate a join link.
    `/api/health` should return `{"ok":true}` when the D1 binding is present.
 
-### Automatic deployments from Git
-
-In Cloudflare's **Workers & Pages**, select **Create application → Pages → Import
-from an existing Git repository**. Choose this repository and use:
-
-| Setting                | Value                       |
-| ---------------------- | --------------------------- |
-| Production branch      | `main`                      |
-| Root directory         | Repository root             |
-| Build command          | `npm run build`             |
-| Build output directory | `dist`                      |
-| `NODE_VERSION`         | `22` or newer               |
-| Deploy command         | None; Pages deploys for you |
-
-Complete the D1 setup above before deploying: replace the all-zero `database_id`,
-keep the `DB` binding, and apply the remote migrations. The root `functions/`
-directory is deployed alongside the assets. Apply D1 migrations separately before
-deploying changes that require them. Pages supplies SPA fallback routing
-automatically; do not rewrite `/assets/*` or `/api/*` to `index.html`.
-
-### Fix “Missing entry-point to Worker script or to assets directory”
-
-If the build succeeds but deployment runs **`npx wrangler deploy`**, the deployment
-is using the **Workers** command against this **Pages** project. Workers Builds
-defaults to that command; it does not deploy the root `functions/` directory as
-Pages Functions.
-
-For Cloudflare-hosted Git builds, connect the repository to a **Pages** project
-using the settings above rather than a Worker. Disable the mistaken Worker's Git
-build trigger to avoid continuing duplicate failures. Repository changes cannot
-change that dashboard setting.
-
-For an external CI pipeline that deploys to an existing Pages project, use:
+To check bundling and asset configuration without publishing:
 
 ```sh
+npm run build
+npx wrangler deploy --dry-run
+```
+
+A dry run does not verify remote credentials, database IDs, or applied migrations.
+
+### Optional Cloudflare Pages deployment
+
+Existing Pages projects can still use `wrangler.pages.toml`. Set its `database_id`
+to the same real database UUID, keep the `DB` binding, and adjust the project name
+in that file and the `deploy:pages` script if necessary. Then run:
+
+```sh
+npx wrangler d1 migrations apply ensemble --remote --config wrangler.pages.toml
+npx wrangler pages project create ensemble --production-branch main
 npm run build
 npm run deploy:pages
 ```
 
-`deploy:pages` runs `wrangler pages deploy dist --project-name ensemble`, including
-the Pages Functions API. Set `CLOUDFLARE_ACCOUNT_ID` and a
-`CLOUDFLARE_API_TOKEN` with **Account → Cloudflare Pages → Edit** permission as CI
-secrets. Adjust the project name in `package.json` and `wrangler.toml` if needed.
-For a single build-and-deploy command, use `npm run deploy`.
+Skip project creation if the Pages project already exists. `deploy:pages` explicitly
+selects the Pages configuration and includes the root `functions/` directory.
+For native Pages Git integration, use `npm run build`, output directory `dist`,
+and no deploy command. Replace the default `wrangler.toml` with the contents of
+`wrangler.pages.toml` in that deployment branch so Pages discovers its configuration.
+Do not run `deploy:pages` from Workers Builds with its default token; Pages deploys
+require **Account → Cloudflare Pages → Edit** permission.
 
-Do not add a dummy Worker entry point or use `wrangler deploy --assets=dist` to
-bypass this error: uploading only assets would omit the accounts and shared-trip
-API. Dependency install-script warnings are not the cause of this deployment
-failure.
+Use a **separate D1 database for preview deployments**, configured through a
+separate Wrangler environment or Pages `[env.preview]` binding. Worker version
+previews do not automatically isolate D1 data. Do not connect untrusted
+pull-request previews to production data.
 
-Use a **separate D1 database for preview deployments**. Configure a preview `DB`
-binding in Cloudflare or a Pages `[env.preview]` section in `wrangler.toml`.
-Do not connect untrusted pull-request previews to production data.
+Keep the same production hostname when changing hosting products if you need to
+retain browser-local trips and sign-ins. Different `workers.dev`, `pages.dev`, or
+custom-domain origins do not share IndexedDB or cookies.
 
 No deployment has been created automatically by this repository.
 
@@ -287,7 +297,7 @@ member's complete accessible event history; extensive receipts and long-lived
 accounts will need paginated/incremental sync and object storage such as R2 before
 large-scale use. History is retained indefinitely, including closed-trip
 tombstones. Define retention, recovery and database backup procedures before
-operating a public service, and budget for Pages Functions/D1 quotas.
+operating a public service, and budget for Workers/D1 quotas.
 
 ## Validation
 
@@ -297,7 +307,7 @@ npm run format:check
 npm run typecheck
 npm run build
 npx playwright install chromium
-npm run test:e2e          # Chromium + local Pages Functions/D1
+npm run test:e2e          # Chromium + local Worker/Static Assets/D1
 ```
 
 Browser tests start a local Cloudflare server on port 8788 if one is not running.
@@ -316,6 +326,7 @@ The GitHub Actions workflow runs this validation on pushes and pull requests.
 src/                    React workspace, forms, offline store, export, styling
 shared/                 Domain types, event projection, validation and money math
 functions/api/           Cloudflare Pages API
+src/worker.ts            Workers entry point reusing the Pages API handler
 migrations/             D1 schema
 public/                 Static assets, manifest and security headers
 tests/                  Domain/property tests and browser/API integration tests

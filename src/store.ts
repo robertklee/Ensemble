@@ -232,7 +232,7 @@ export async function api<T>(path: string, method = 'GET', data?: unknown): Prom
   });
   if (!response.headers.get('Content-Type')?.includes('application/json'))
     throw new Error(
-      'Cloud sync is unavailable here. Local mode works without a server; accounts require Cloudflare Pages Functions and D1.',
+      'Cloud sync is unavailable here. Local mode works without a server; accounts require the Cloudflare API and D1.',
     );
   const result = (await response.json()) as T & { error?: string };
   if (!response.ok) throw new ApiError(response.status, result.error ?? 'The request failed.');

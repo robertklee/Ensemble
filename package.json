@@ -13,11 +13,11 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "assets:icons": "node scripts/generate-icons.mjs",
-    "cf:dev": "npm run build && wrangler pages dev dist",
+    "cf:dev": "npm run build && wrangler dev --port 8788",
     "db:local": "wrangler d1 migrations apply ensemble --local",
     "db:remote": "wrangler d1 migrations apply ensemble --remote",
-    "deploy:pages": "wrangler pages deploy dist --project-name ensemble",
-    "deploy": "npm run build && npm run deploy:pages"
+    "deploy:pages": "wrangler pages deploy dist --config wrangler.pages.toml --project-name ensemble",
+    "deploy": "wrangler deploy"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

@@ -6,6 +6,47 @@ import type { TripEvent, User } from '../../shared/types';
 import { fixture } from '../fixtures';
 
 const origin = 'http://127.0.0.1:8788';
+test('Cloudflare serves static assets, SPA routes and API routes separately', async ({
+  request,
+}) => {
+  const home = await request.get('/');
+  expect(home.status()).toBe(200);
+  expect(home.headers()['content-type']).toContain('text/html');
+  expect(home.headers()['x-content-type-options']).toBe('nosniff');
+  expect(home.headers()['content-security-policy']).toContain("default-src 'self'");
+  expect(await home.text()).toContain('Ensemble — trips, not tabs');
+
+  const deepLink = await request.get('/trips/example', {
+    headers: { 'Sec-Fetch-Mode': 'navigate' },
+  });
+  expect(deepLink.status()).toBe(200);
+  expect(await deepLink.text()).toContain('Ensemble — trips, not tabs');
+
+  const icon = await request.get('/ensemble-icon.svg');
+  expect(icon.status()).toBe(200);
+  expect(icon.headers()['content-type']).toContain('image/svg+xml');
+  const serviceWorker = await request.get('/sw.js');
+  expect(serviceWorker.status()).toBe(200);
+  expect(serviceWorker.headers()['cache-control']).toBe('no-cache');
+
+  // Browser navigations to the API must not be swallowed by the SPA fallback.
+  const health = await request.get('/api/health', {
+    headers: { 'Sec-Fetch-Mode': 'navigate' },
+  });
+  expect(health.status()).toBe(200);
+  expect(health.headers()['content-type']).toContain('application/json');
+  expect(await health.json()).toEqual({ ok: true });
+  for (const path of ['/api', '/api/', '/api/nonexistent']) {
+    const response = await request.get(path, {
+      headers: { 'Sec-Fetch-Mode': 'navigate' },
+    });
+    expect(response.status()).toBe(401);
+    expect(response.headers()['content-type']).toContain('application/json');
+    expect(response.headers()['cache-control']).toBe('no-store');
+    expect(await response.json()).toHaveProperty('error');
+  }
+});
+
 test('Ensemble branding preserves existing trips and provides offline app icons', async ({
   page,
   context,

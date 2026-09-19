@@ -644,7 +644,7 @@ async function handle(request: Request, db: D1Database) {
   }
   throw new HttpError(404, 'API endpoint not found.');
 }
-export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
+export async function handleApiRequest(request: Request, env: Env) {
   try {
     check(
       env.DB,
@@ -657,4 +657,6 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
     console.error('Ensemble API failure', error);
     return json({ error: 'The server could not complete this request. Please try again.' }, 500);
   }
-};
+}
+
+export const onRequest: PagesFunction<Env> = ({ request, env }) => handleApiRequest(request, env);
