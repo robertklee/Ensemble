@@ -6,5 +6,5 @@ pages_build_output_dir = "./dist"
 [[d1_databases]]
 binding = "DB"
 database_name = "ensemble"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "d2137c96-5f9a-4749-b5e0-c16fd5734de1"
 migrations_dir = "migrations"
