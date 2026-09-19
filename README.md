@@ -188,6 +188,19 @@ Closing a trip requires every net balance to be exactly zero. Closed trips are
 read-only until the organizer reopens them. Members cannot leave with a balance,
 and the organizer cannot leave their own trip.
 
+### Edit trip details
+
+Organizers can open **Members → Trip settings → Edit trip details** to change the
+name, description, start date, and end date. Optional descriptions and dates can be
+cleared. The settlement currency is fixed to preserve historical balances and
+payments. Closed trips must be reopened first; deleted trips cannot be edited.
+
+Edits work offline, synchronize with shared trips, appear in Activity, and are
+included in PDF and JSON exports. Only changed fields are saved, so concurrent
+name and description edits do not overwrite each other. Start and end dates are
+saved together to prevent concurrent updates from creating an invalid date range.
+The original creation event remains unchanged. No database migration is needed.
+
 ### Delete a trip
 
 The organizer can open **Members → Trip settings → Delete trip**, then type the

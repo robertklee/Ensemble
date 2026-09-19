@@ -5,7 +5,7 @@ import { balances } from '../../shared/money';
 import type { TripEvent, User } from '../../shared/types';
 import { expense, fixture, withEvent } from '../fixtures';
 import type { Workspace } from '../../src/store';
-import { serializeTrip } from '../../src/backup';
+import { parseTripBackup, serializeTrip } from '../../src/backup';
 
 const importedWorkspace: Workspace = {
   mode: 'local',
@@ -16,6 +16,78 @@ const importedWorkspace: Workspace = {
   notices: [],
   lastSynced: null,
 };
+
+test('trip details can be edited offline, cancelled and exported with history', async ({
+  page,
+  context,
+}) => {
+  await page.goto('/');
+  await page.getByRole('tab', { name: 'Members' }).click();
+  await page.getByRole('button', { name: 'Edit trip details', exact: true }).click();
+  await expect(page.getByLabel('Trip name', { exact: true })).toHaveValue('Lisbon, with love');
+  await expect(page.getByLabel('Settle in', { exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
+  await page.getByLabel('Trip name', { exact: true }).fill('Cancelled name');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Lisbon, with love', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Edit trip details', exact: true }).click();
+  await page.getByLabel('Trip name', { exact: true }).fill('Lisbon reunion');
+  await page.getByLabel(/A little about the trip/).fill('A week with friends');
+  await page.getByLabel('Start date', { exact: true }).fill('2026-10-01');
+  await page.getByLabel('End date', { exact: true }).fill('2026-10-07');
+  await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
+  await context.setOffline(true);
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Lisbon reunion', exact: true })).toBeVisible();
+  await expect(page.getByText('A week with friends', { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Lisbon reunion', exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: 'Activity' }).click();
+  await expect(page.getByText('updated the trip details', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download JSON', exact: false }).click();
+  const file = await download;
+  expect(file.suggestedFilename()).toBe('Lisbon-reunion.json');
+  const restored = await parseTripBackup(await readFile((await file.path())!, 'utf8'));
+  expect(restored.state.trip).toMatchObject({
+    name: 'Lisbon reunion',
+    description: 'A week with friends',
+    startDate: '2026-10-01',
+    endDate: '2026-10-07',
+    baseCurrency: 'EUR',
+  });
+  expect(restored.state.events[0].kind).toBe('trip.create');
+  if (restored.state.events[0].kind === 'trip.create')
+    expect(restored.state.events[0].trip.name).toBe('Lisbon, with love');
+  await context.setOffline(false);
+});
+
+test('trip detail forms preserve concurrent edits to unrelated fields', async ({
+  page,
+  context,
+}) => {
+  await page.goto('/');
+  await page.getByRole('tab', { name: 'Members' }).click();
+  await page.getByRole('button', { name: 'Edit trip details', exact: true }).click();
+  await page.getByLabel('Trip name', { exact: true }).fill('Concurrent reunion');
+  const second = await context.newPage();
+  await second.goto('/');
+  await second.getByRole('tab', { name: 'Members' }).click();
+  await second.getByRole('button', { name: 'Edit trip details', exact: true }).click();
+  await second.getByLabel(/A little about the trip/).fill('Keep this description');
+  await second.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(second.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.reload();
+  await expect(
+    page.getByRole('heading', { name: 'Concurrent reunion', exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText('Keep this description', { exact: true })).toBeVisible();
+  await second.close();
+});
 
 async function selectTripFile(page: Page, text: string) {
   await page.getByLabel('Trip JSON file').setInputFiles({
@@ -826,6 +898,32 @@ test('Cloudflare accounts, privacy, friendship, invites, concurrent edits and tr
       data: { token: new URL(invite.url).searchParams.get('join') },
     });
     expect(join.ok(), await join.text()).toBe(true);
+    const forbiddenTripEdit = await b.post('/api/events', {
+      data: {
+        event: makeEvent(tripId, bob.id, { kind: 'trip.edit', patch: { name: 'Unauthorized' } }),
+      },
+    });
+    expect(forbiddenTripEdit.status()).toBe(400);
+    expect((await forbiddenTripEdit.json()).error).toContain('Only the organizer');
+    const tripEdits = await Promise.all([
+      a.post('/api/events', {
+        data: {
+          event: makeEvent(tripId, alice.id, {
+            kind: 'trip.edit',
+            patch: { description: 'A shared weekend' },
+          }),
+        },
+      }),
+      a.post('/api/events', {
+        data: {
+          event: makeEvent(tripId, alice.id, {
+            kind: 'trip.edit',
+            patch: { dates: { startDate: '2026-10-01', endDate: '2026-10-03' } },
+          }),
+        },
+      }),
+    ]);
+    for (const response of tripEdits) expect(response.ok(), await response.text()).toBe(true);
     const expenseId = crypto.randomUUID();
     const added = makeEvent(tripId, alice.id, {
       kind: 'expense.add',
@@ -886,6 +984,11 @@ test('Cloudflare accounts, privacy, friendship, invites, concurrent edits and tr
     for (const response of simultaneous) expect(response.ok(), await response.text()).toBe(true);
     const synced = (await (await b.get('/api/bootstrap')).json()) as { events: TripEvent[] };
     const state = project(synced.events);
+    expect(state.trip).toMatchObject({
+      description: 'A shared weekend',
+      startDate: '2026-10-01',
+      endDate: '2026-10-03',
+    });
     expect(state.expenses).toHaveLength(1);
     expect(state.expenses[0].description).toBe('Lake cabin');
     expect(state.expenses[0].notes).toBe('Booked together');
@@ -941,6 +1044,9 @@ test('Cloudflare accounts, privacy, friendship, invites, concurrent edits and tr
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await page.getByRole('button', { name: 'Shared cabin', exact: true }).first().click();
     await page.getByRole('tab', { name: 'Members', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Edit trip details', exact: true })).toHaveCount(
+      0,
+    );
     await expect(page.getByRole('button', { name: 'Delete trip', exact: true })).toHaveCount(0);
     await context.setOffline(true);
     await page.getByRole('button', { name: 'Add expense', exact: true }).first().click();

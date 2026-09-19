@@ -49,6 +49,26 @@ function workspace(): Workspace {
 }
 
 describe('individual trip JSON', () => {
+  it('round-trips edited details through trip copies and workspace backups', async () => {
+    const original = workspace();
+    const state = withEvent(project(original.events), {
+      kind: 'trip.edit',
+      patch: {
+        name: 'Updated trip',
+        description: 'A new plan',
+        dates: { startDate: '2026-10-01', endDate: '' },
+      },
+    });
+    const parsed = await parseTripBackup(serializeTrip(state, original.user));
+    const copy = copyTrip(parsed, original.user.id);
+    expect(copy.trip).toEqual({ ...state.trip, id: copy.trip.id });
+    expect(
+      (await parseBackup(serializeBackup({ ...original, events: state.events }))).workspace.events,
+    ).toEqual(state.events);
+    const invalid = JSON.parse(serializeTrip(state, original.user));
+    invalid.events.at(-1).patch.baseCurrency = 'EUR';
+    await expect(parseTripBackup(JSON.stringify(invalid))).rejects.toThrow('Invalid trip JSON');
+  });
   it('round-trips the complete history and makes independent copies without changing money or participants', async () => {
     const original = workspace();
     let source = project(original.events);

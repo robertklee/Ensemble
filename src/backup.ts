@@ -70,6 +70,23 @@ const event = z.discriminatedUnion('kind', [
   }),
   z.object({
     ...metadata,
+    kind: z.literal('trip.edit'),
+    patch: z
+      .object({
+        name: z.string().max(80).optional(),
+        description: z.string().max(1000).optional(),
+        dates: z
+          .object({
+            startDate: z.string().max(10),
+            endDate: z.string().max(10),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict(),
+  }),
+  z.object({
+    ...metadata,
     kind: z.literal('trip.status'),
     status: z.enum(['active', 'settling', 'closed']),
   }),

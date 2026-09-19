@@ -21,6 +21,7 @@ import {
   type SplitMethod,
   type Transfer,
   type Trip,
+  type TripPatch,
   type TripState,
 } from '../shared/types';
 import {
@@ -141,9 +142,17 @@ export function ErrorText({ error }: { error: string }) {
     </div>
   ) : null;
 }
-export function Submit({ busy, children }: { busy: boolean; children: ReactNode }) {
+export function Submit({
+  busy,
+  disabled = false,
+  children,
+}: {
+  busy: boolean;
+  disabled?: boolean;
+  children: ReactNode;
+}) {
   return (
-    <button className="button primary" type="submit" disabled={busy}>
+    <button className="button primary" type="submit" disabled={busy || disabled}>
       {busy ? <LoaderCircle size={17} className="spin" /> : <Check size={17} />}
       {busy ? 'Saving…' : children}
     </button>
@@ -471,17 +480,35 @@ export function DeleteTripForm({
 }
 export function TripForm({
   workspace,
+  initial,
+  onCancel,
   onDone,
 }: {
   workspace: Workspace;
+  initial?: Trip;
+  onCancel?: () => void;
   onDone: (id: string) => void;
 }) {
-  const [name, setName] = useState(''),
-    [description, setDescription] = useState('');
-  const [currency, setCurrency] = useState(workspace.user.defaultCurrency);
-  const [startDate, setStartDate] = useState(''),
-    [endDate, setEndDate] = useState('');
+  const [baseline] = useState(initial);
+  const [name, setName] = useState(initial?.name ?? ''),
+    [description, setDescription] = useState(initial?.description ?? '');
+  const [currency, setCurrency] = useState(initial?.baseCurrency ?? workspace.user.defaultCurrency);
+  const [startDate, setStartDate] = useState(initial?.startDate ?? ''),
+    [endDate, setEndDate] = useState(initial?.endDate ?? '');
+  const patch: TripPatch = {};
+  if (baseline) {
+    if (name.trim() !== baseline.name) patch.name = name.trim();
+    if (description.trim() !== baseline.description) patch.description = description.trim();
+    if (startDate !== baseline.startDate || endDate !== baseline.endDate)
+      patch.dates = { startDate, endDate };
+  }
   const { busy, error, submit } = useSubmit(async () => {
+    if (baseline) {
+      if (!Object.keys(patch).length) throw new Error('No trip details have changed.');
+      await dispatch(baseline.id, { kind: 'trip.edit', patch });
+      onDone(baseline.id);
+      return;
+    }
     const trip: Trip = {
       id: crypto.randomUUID(),
       name: name.trim(),
@@ -544,15 +571,29 @@ export function TripForm({
       </div>
       <label>
         Settle in
-        <CurrencySelect value={currency} onChange={setCurrency} />
+        {baseline ? (
+          <input value={currency} disabled />
+        ) : (
+          <CurrencySelect value={currency} onChange={setCurrency} />
+        )}
       </label>
       <div className="info-box">
-        All balances and payments use this currency. You can still add expenses in other currencies.
+        {baseline
+          ? 'The settlement currency stays fixed to protect existing balances and payment history.'
+          : 'All balances and payments use this currency. You can still add expenses in other currencies.'}
       </div>
       <ErrorText error={error} />
       <div className="form-footer">
-        <span>Good trips start here.</span>
-        <Submit busy={busy}>Create trip</Submit>
+        {onCancel ? (
+          <button type="button" className="button secondary" disabled={busy} onClick={onCancel}>
+            Cancel
+          </button>
+        ) : (
+          <span>Good trips start here.</span>
+        )}
+        <Submit busy={busy} disabled={!!baseline && !Object.keys(patch).length}>
+          {baseline ? 'Save changes' : 'Create trip'}
+        </Submit>
       </div>
     </form>
   );

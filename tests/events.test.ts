@@ -5,6 +5,122 @@ import { balances } from '../shared/money';
 import { expense, fixture, withEvent } from './fixtures';
 
 describe('immutable event projection and validation', () => {
+  it('edits trip metadata without changing identity, membership or finances', () => {
+    let state = fixture();
+    state = withEvent(state, { kind: 'expense.add', expense: expense(state) });
+    const before = structuredClone(state);
+    const edit = makeEvent(state.trip.id, 'u0', {
+      kind: 'trip.edit',
+      patch: {
+        name: 'Mountain weekend',
+        description: 'Friends, hiking, and dinner',
+        dates: { startDate: '2026-10-01', endDate: '2026-10-04' },
+      },
+    });
+    expect(() => validateEvent(edit, state)).not.toThrow();
+    state = project([...state.events, edit]);
+    expect(state.trip).toEqual({
+      ...before.trip,
+      name: 'Mountain weekend',
+      description: 'Friends, hiking, and dinner',
+      startDate: '2026-10-01',
+      endDate: '2026-10-04',
+    });
+    expect(state.expenses).toEqual(before.expenses);
+    expect(balances(state)).toEqual(balances(before));
+    expect(project([...state.events].reverse())).toEqual(state);
+    expect(project([...state.events, edit])).toEqual(state);
+    expect(eventLabel(edit, (id) => id)).toBe('updated the trip details');
+  });
+
+  it('merges separate trip fields while treating the date range as one change', () => {
+    let state = fixture();
+    state = withEvent(state, {
+      kind: 'trip.edit',
+      patch: { name: 'New name', dates: { startDate: '2026-10-01', endDate: '2026-10-04' } },
+    });
+    state = withEvent(state, { kind: 'trip.edit', patch: { description: 'Concurrent note' } });
+    state = withEvent(state, {
+      kind: 'trip.edit',
+      patch: { dates: { startDate: '2026-11-01', endDate: '2026-11-02' } },
+    });
+    expect(state.trip).toMatchObject({
+      name: 'New name',
+      description: 'Concurrent note',
+      startDate: '2026-11-01',
+      endDate: '2026-11-02',
+    });
+    const clear = makeEvent(state.trip.id, 'u0', {
+      kind: 'trip.edit',
+      patch: { description: '', dates: { startDate: '', endDate: '' } },
+    });
+    expect(() => validateEvent(clear, state)).not.toThrow();
+    expect(project([...state.events, clear]).trip).toMatchObject({
+      description: '',
+      startDate: '',
+      endDate: '',
+    });
+  });
+
+  it('restricts trip editing to active organizers of open trips', () => {
+    let state = fixture();
+    const joined = state.events.find((e) => e.kind === 'member.add')!;
+    if (joined.kind === 'member.add') joined.member.isGhost = false;
+    state = project(state.events);
+    const data: EventData = { kind: 'trip.edit', patch: { name: 'Changed' } };
+    expect(() => validateEvent(makeEvent(state.trip.id, 'u1', data), state)).toThrow(
+      'Only the organizer',
+    );
+    expect(() => validateEvent(makeEvent(state.trip.id, 'outsider', data), state)).toThrow(
+      'Only current members',
+    );
+    expect(() => validateEvent(makeEvent(state.trip.id, 'outsider', data), state, true)).toThrow(
+      'Only the organizer',
+    );
+    state = withEvent(state, { kind: 'trip.status', status: 'settling' });
+    expect(() => validateEvent(makeEvent(state.trip.id, 'u0', data), state)).not.toThrow();
+    state = withEvent(state, { kind: 'trip.status', status: 'closed' });
+    expect(() => validateEvent(makeEvent(state.trip.id, 'u0', data), state)).toThrow('Reopen');
+    state = withEvent(state, { kind: 'trip.delete' });
+    expect(() => validateEvent(makeEvent(state.trip.id, 'u0', data), state)).toThrow('deleted');
+  });
+
+  it('rejects invalid trip patches, dates and changes to immutable fields', () => {
+    const state = fixture();
+    for (const patch of [
+      null,
+      [],
+      {},
+      { name: '' },
+      { name: ' '.repeat(5) },
+      { name: 'x'.repeat(81) },
+      { description: 'x'.repeat(1001) },
+      { description: 123 },
+      { baseCurrency: 'EUR' },
+      { status: 'closed' },
+      { id: 'another' },
+      { createdBy: 'u1' },
+      { members: [] },
+      { dates: null },
+      { dates: { startDate: '2026-01-01' } },
+      { dates: { startDate: 'invalid', endDate: '' } },
+      { dates: { startDate: '2026-02-30', endDate: '' } },
+      { dates: { startDate: '2026-10-04', endDate: '2026-10-01' } },
+      { dates: { startDate: '', endDate: '', baseCurrency: 'EUR' } },
+    ]) {
+      const event = JSON.parse(
+        JSON.stringify(
+          makeEvent(state.trip.id, 'u0', {
+            kind: 'trip.edit',
+            patch: { name: 'Valid' },
+          }),
+        ),
+      );
+      event.patch = patch;
+      expect(() => validateEvent(event, state)).toThrow();
+    }
+  });
+
   it.each(['active', 'settling', 'closed'] as const)(
     'allows the organizer to delete a %s trip',
     (status) => {
@@ -48,6 +164,7 @@ describe('immutable event projection and validation', () => {
     state = withEvent(state, { kind: 'expense.add', expense: original });
     state = withEvent(state, { kind: 'trip.delete' });
     const changes: EventData[] = [
+      { kind: 'trip.edit', patch: { description: 'Stale trip description' } },
       { kind: 'trip.delete' },
       { kind: 'trip.status', status: 'active' },
       { kind: 'expense.add', expense: expense(state) },

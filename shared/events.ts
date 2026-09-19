@@ -44,6 +44,11 @@ export function project(events: TripEvent[]): TripState {
     switch (event.kind) {
       case 'trip.create':
         break;
+      case 'trip.edit': {
+        const { dates, ...fields } = event.patch;
+        Object.assign(state.trip, structuredClone(fields), dates ? structuredClone(dates) : {});
+        break;
+      }
       case 'trip.status':
         state.trip.status = event.status;
         break;
@@ -313,6 +318,39 @@ export function validateEvent(
   }
   assert(current.trip.status !== 'closed', 'Reopen this trip before making changes.');
   switch (event.kind) {
+    case 'trip.edit': {
+      assert(organizer, 'Only the organizer can edit trip details.');
+      const patch = event.patch;
+      assert(
+        patch &&
+          typeof patch === 'object' &&
+          !Array.isArray(patch) &&
+          Object.keys(patch).length > 0 &&
+          Object.keys(patch).every((key) => ['name', 'description', 'dates'].includes(key)),
+        'Invalid trip edit fields.',
+      );
+      if ('name' in patch) text(patch.name, 'Trip name', 80);
+      if ('description' in patch) text(patch.description, 'Description', 1000, false);
+      if ('dates' in patch) {
+        const dates = patch.dates;
+        assert(
+          dates &&
+            typeof dates === 'object' &&
+            !Array.isArray(dates) &&
+            Object.keys(dates).sort().join(',') === 'endDate,startDate' &&
+            typeof dates.startDate === 'string' &&
+            typeof dates.endDate === 'string',
+          'Trip date changes must include both start and end dates.',
+        );
+        date(dates.startDate);
+        date(dates.endDate);
+        assert(
+          !dates.startDate || !dates.endDate || dates.startDate <= dates.endDate,
+          'End date must be after start date.',
+        );
+      }
+      break;
+    }
     case 'member.add':
       assert(
         trustedMembership || (organizer && event.member.isGhost),
@@ -425,6 +463,8 @@ export function eventLabel(event: TripEvent, memberName: (id: string) => string)
   switch (event.kind) {
     case 'trip.create':
       return 'created the trip';
+    case 'trip.edit':
+      return 'updated the trip details';
     case 'trip.status':
       return `changed the trip to ${event.status}`;
     case 'trip.delete':

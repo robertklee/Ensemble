@@ -37,6 +37,9 @@ export interface Trip {
   members: Member[];
   deletedAt?: string;
 }
+export type TripPatch = Partial<Pick<Trip, 'name' | 'description'>> & {
+  dates?: Pick<Trip, 'startDate' | 'endDate'>;
+};
 export interface Payer {
   userId: string;
   amountPaid: number;
@@ -82,6 +85,7 @@ export type ExpensePatch = Partial<
 > & { ledger?: Ledger };
 export type EventData =
   | { kind: 'trip.create'; trip: Trip }
+  | { kind: 'trip.edit'; patch: TripPatch }
   | { kind: 'trip.status'; status: TripStatus }
   | { kind: 'trip.delete' }
   | { kind: 'member.add'; member: Member }

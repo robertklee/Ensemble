@@ -107,6 +107,7 @@ type ModalState =
       kind:
         | 'trip'
         | 'delete-trip'
+        | 'edit-trip'
         | 'auth'
         | 'invite'
         | 'export'
@@ -189,9 +190,16 @@ export default function App() {
     setSelected(null);
     setModal((current) =>
       current &&
-      ['expense', 'detail', 'payment', 'invite', 'export', 'merge', 'delete-trip'].includes(
-        current.kind,
-      )
+      [
+        'expense',
+        'detail',
+        'payment',
+        'invite',
+        'export',
+        'merge',
+        'delete-trip',
+        'edit-trip',
+      ].includes(current.kind)
         ? null
         : current,
     );
@@ -1301,6 +1309,14 @@ export default function App() {
                       </p>
                       {organizer ? (
                         <>
+                          <button
+                            className="button secondary"
+                            disabled={busy || closed}
+                            onClick={() => setModal({ kind: 'edit-trip' })}
+                          >
+                            <Pencil size={16} />
+                            Edit trip details
+                          </button>
                           {state.trip.status === 'active' && (
                             <button
                               className="button secondary"
@@ -1455,6 +1471,14 @@ export default function App() {
                 choose(id);
                 done('Your trip is ready. Add your travel crew next.');
               }}
+            />
+          )}
+          {modal.kind === 'edit-trip' && state && (
+            <TripForm
+              workspace={tripWorkspace}
+              initial={state.trip}
+              onCancel={close}
+              onDone={() => done('Trip details updated.')}
             />
           )}
           {modal.kind === 'delete-trip' && state && (
@@ -1995,6 +2019,8 @@ function modalTitle(modal: ModalState, state?: TripState) {
       return 'A new adventure';
     case 'delete-trip':
       return 'Delete this trip?';
+    case 'edit-trip':
+      return 'Edit trip details';
     case 'auth':
       return 'Better, together';
     case 'expense':
