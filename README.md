@@ -95,11 +95,55 @@ or reloading the page.
    and use **Invite a friend** to add accepted friends or generate a join link.
    `/api/health` should return `{"ok":true}` when the D1 binding is present.
 
-For Pages Git integration, use **`npm run build`** as the build command and
-**`dist`** as the output directory; the root `functions/` directory is deployed
-alongside the assets. Set `NODE_VERSION` to `22` or newer. Apply D1 migrations
-separately before deploying changes that require them. Pages supplies SPA fallback
-routing automatically; do not rewrite `/assets/*` or `/api/*` to `index.html`.
+### Automatic deployments from Git
+
+In Cloudflare's **Workers & Pages**, select **Create application → Pages → Import
+from an existing Git repository**. Choose this repository and use:
+
+| Setting                | Value                       |
+| ---------------------- | --------------------------- |
+| Production branch      | `main`                      |
+| Root directory         | Repository root             |
+| Build command          | `npm run build`             |
+| Build output directory | `dist`                      |
+| `NODE_VERSION`         | `22` or newer               |
+| Deploy command         | None; Pages deploys for you |
+
+Complete the D1 setup above before deploying: replace the all-zero `database_id`,
+keep the `DB` binding, and apply the remote migrations. The root `functions/`
+directory is deployed alongside the assets. Apply D1 migrations separately before
+deploying changes that require them. Pages supplies SPA fallback routing
+automatically; do not rewrite `/assets/*` or `/api/*` to `index.html`.
+
+### Fix “Missing entry-point to Worker script or to assets directory”
+
+If the build succeeds but deployment runs **`npx wrangler deploy`**, the deployment
+is using the **Workers** command against this **Pages** project. Workers Builds
+defaults to that command; it does not deploy the root `functions/` directory as
+Pages Functions.
+
+For Cloudflare-hosted Git builds, connect the repository to a **Pages** project
+using the settings above rather than a Worker. Disable the mistaken Worker's Git
+build trigger to avoid continuing duplicate failures. Repository changes cannot
+change that dashboard setting.
+
+For an external CI pipeline that deploys to an existing Pages project, use:
+
+```sh
+npm run build
+npm run deploy:pages
+```
+
+`deploy:pages` runs `wrangler pages deploy dist --project-name ensemble`, including
+the Pages Functions API. Set `CLOUDFLARE_ACCOUNT_ID` and a
+`CLOUDFLARE_API_TOKEN` with **Account → Cloudflare Pages → Edit** permission as CI
+secrets. Adjust the project name in `package.json` and `wrangler.toml` if needed.
+For a single build-and-deploy command, use `npm run deploy`.
+
+Do not add a dummy Worker entry point or use `wrangler deploy --assets=dist` to
+bypass this error: uploading only assets would omit the accounts and shared-trip
+API. Dependency install-script warnings are not the cause of this deployment
+failure.
 
 Use a **separate D1 database for preview deployments**. Configure a preview `DB`
 binding in Cloudflare or a Pages `[env.preview]` section in `wrangler.toml`.

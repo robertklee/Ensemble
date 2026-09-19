@@ -1,3 +1,4 @@
+# Pages configuration: deploy with npm run deploy, not wrangler deploy.
 name = "ensemble"
 compatibility_date = "2025-09-13"
 pages_build_output_dir = "./dist"

@@ -16,7 +16,8 @@
     "cf:dev": "npm run build && wrangler pages dev dist",
     "db:local": "wrangler d1 migrations apply ensemble --local",
     "db:remote": "wrangler d1 migrations apply ensemble --remote",
-    "deploy": "npm run build && wrangler pages deploy dist --project-name ensemble"
+    "deploy:pages": "wrangler pages deploy dist --project-name ensemble",
+    "deploy": "npm run build && npm run deploy:pages"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",
