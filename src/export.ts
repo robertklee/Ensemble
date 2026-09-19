@@ -1,6 +1,7 @@
 import { balances, money, settlementPlan } from '../shared/money';
-import type { TripState } from '../shared/types';
+import type { TripState, User } from '../shared/types';
 import type { Workspace } from './store';
+import { serializeBackup, serializeTrip } from './backup';
 
 function download(content: string, filename: string, type: string) {
   const url = URL.createObjectURL(new Blob([content], { type }));
@@ -159,5 +160,8 @@ export function printTrip(state: TripState) {
   win.print();
 }
 export function exportBackup(workspace: Workspace) {
-  download(JSON.stringify(workspace, null, 2), 'ensemble-backup.json', 'application/json');
+  download(serializeBackup(workspace), 'ensemble-backup.json', 'application/json');
+}
+export function exportTripJSON(state: TripState, user: User) {
+  download(serializeTrip(state, user), `${slug(state.trip.name)}.json`, 'application/json');
 }

@@ -157,7 +157,11 @@ svg {
   background: #fbfcf9;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
   z-index: 20;
+}
+.sidebar > * {
+  flex-shrink: 0;
 }
 .brand {
   display: flex;

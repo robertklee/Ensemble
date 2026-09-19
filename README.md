@@ -33,7 +33,7 @@ names are also `ensemble`.
 
 When upgrading an older installation, users must sign in again. Browser-local
 trips in the previous database are not migrated automatically; export a JSON
-backup before upgrading (the app does not yet offer backup import). Keep the
+backup before upgrading, then import it into the local workspace. Keep the
 existing D1 UUID to preserve cloud accounts and trips. Changing source names does
 not rename remote Cloudflare resources or copy databases; configure the Worker
 and Pages project names in Cloudflare to match before deploying.
@@ -171,7 +171,7 @@ No deployment has been created automatically by this repository.
 | Balances   | Per-member paid/share/net totals, raw pairwise debts, base-currency conversion using a stored manually entered FX rate                                             |
 | Settlement | Exact minimum-transfer solver for up to 15 non-zero balances; clearly labeled greedy fallback above that size; full and partial recorded payments                  |
 | History    | Immutable audit events, per-expense comments, review/reapply previous expense versions, member/category/date/search filters                                        |
-| Export     | CSV with per-member totals, expenses, payments and proposed transfers; printable summary with browser Save as PDF; full archival JSON export                       |
+| Export     | CSV totals, expenses, payments and transfers; printable/PDF summaries; versioned JSON backups and validated local restore                                          |
 | Offline    | IndexedDB persistence, transactional writes across tabs, precached production app, durable account-event queue, reconnect/foreground synchronization               |
 | Updates    | Immediate local balance recomputation, shared-trip polling every 30 seconds while visible, in-app activity notifications                                           |
 
@@ -199,7 +199,7 @@ Deletion removes the trip from every member's trip list, including the local
 example trip. It is a **soft deletion**, not permanent data erasure: an immutable
 `trip.delete` event hides the trip while preserving its financial history.
 Historical events remain available to the existing members through sync and full
-JSON backups for audit; there is no restore control in the app. Deleted trips
+JSON backups for audit; importing a backup preserves deletion tombstones. Deleted trips
 cannot be reopened, edited or joined through old invite links.
 
 Offline deletion is saved immediately on the organizer's device and is propagated
@@ -288,9 +288,64 @@ Use a password manager: there is currently no self-service account recovery.
 Notifications are in-app, and collaborative refresh is polling rather than a
 WebSocket/push stream. FX rates are entered manually rather than fetched.
 
-PDF export uses the browser print dialog. JSON exports are archival data; there is
-not yet an import/restore UI. Local/demo trips are not automatically promoted into
-cloud trips.
+PDF export uses the browser print dialog. Local/demo trips and imported backups are
+not automatically promoted into cloud trips.
+
+## Export and import backups
+
+### Individual trips
+
+Open a trip's **Export → Download JSON** to export only that trip, including its
+participants, expenses (including deleted entries), receipts, comments, payments,
+status, and full edit history. These versioned files use `format: "ensemble-trip"`
+and are separate from full-workspace backups. They include pending offline edits
+and private financial data; share them only with people you trust.
+
+Choose **Import trip JSON** in the sidebar or **Your account**. In local mode,
+select the file, review the summary, and choose which existing non-placeholder
+participant to view and edit as. Their original balances and permissions apply
+only to this copy; your workspace profile does not change. Choose the organizer
+if you need organizer controls. The selected identity is retained in full backups.
+
+Import adds a separate trip with new trip, event, expense, and payment IDs. It
+does not replace or merge existing trips, and importing the same file again creates
+another independent copy. Participant IDs and historical event order are retained
+to preserve split and FX rounding exactly. Closed trips remain closed; deleted
+trips cannot be imported to bypass their tombstones. Changes to the original and
+the imported copy never sync with each other.
+
+Trip import works offline and uses the same 25 MB / 10,000-event limits and full
+history validation as workspace restore. Sign out first to import locally;
+exports work for both local and shared trips, but imports do not upload data to
+shared accounts. Invalid files and storage failures leave existing trips intact.
+
+### Full workspace
+
+Open **Your account → Export full JSON backup** to download the current workspace:
+profile, full trip history, expenses, receipts, comments, payments, deleted records,
+and pending offline edits. JSON backups contain private financial data and receipts;
+store them securely. CSV/PDF exports remain available from each trip's **Export** menu,
+but cannot be imported.
+
+In local mode, choose **Your account → Import JSON backup**. Select a file, review
+the profile and record counts, and confirm **Replace my local workspace with this
+backup**. Export your current workspace first if you need to retain it. Import is a
+replacement, not a merge, and works offline. Saving is atomic; invalid files,
+cancellation, storage failures, or changes made in another tab do not partially
+overwrite your data.
+
+New exports use the `ensemble-backup` format with `version: 1`, `exportedAt`, and
+`workspace` fields. The importer also accepts older unversioned workspace JSON files.
+Files are limited to 25 MB and 10,000 events. Event shapes, references, permissions,
+and financial invariants are checked before import. Conflicted histories (for example,
+an unsynced edit after a trip was deleted) are rejected with an error, not silently
+dropped; retain the original backup for recovery.
+
+Sign out before importing. A shared-workspace backup restores as an independent
+local copy, with the backed-up user identity and valid pending edits in its history.
+Friends, notifications, sessions, and sync queues are not restored, and nothing is
+uploaded or changed on the server. Deleted trips stay deleted and remain in the
+backup history. To resume live shared trips instead, sign into the original account.
 
 This implementation targets small friend groups. Bootstrap currently fetches the
 member's complete accessible event history; extensive receipts and long-lived
@@ -312,7 +367,8 @@ npm run test:e2e          # Chromium + local Worker/Static Assets/D1
 
 Browser tests start a local Cloudflare server on port 8788 if one is not running.
 They cover expense entry, exact-sum rejection, edits/comments, payment/closure,
-CSV export, receipt upload, mobile overflow, offline reload/reconnect, accounts,
+CSV export, JSON backup round trips and invalid-file/concurrent-tab protection,
+receipt upload, mobile overflow, offline reload/reconnect, accounts,
 trip privacy, invitations and concurrent API writes. They use disposable test
 usernames in the **local** database, never a remote database. Core tests include
 random monetary invariants, comparison against an independent exhaustive

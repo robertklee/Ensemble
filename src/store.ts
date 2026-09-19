@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { makeEvent, project, validateEvent } from '../shared/events';
 import { splitAmount } from '../shared/money';
 import type { EventData, Friend, Notice, Trip, TripEvent, TripState, User } from '../shared/types';
+import { copyTrip, type ParsedTripBackup } from './backup';
 
 export interface Workspace {
   mode: 'local' | 'cloud';
@@ -11,6 +12,7 @@ export interface Workspace {
   friends: Friend[];
   notices: Notice[];
   lastSynced: string | null;
+  localTripMembers?: Record<string, string>;
 }
 interface Snapshot {
   workspace: Workspace | null;
@@ -145,8 +147,32 @@ export function tripStates(workspace: Workspace): TripState[] {
   return [...groups.values()]
     .filter((events) => !events.some((e) => e.kind === 'trip.delete'))
     .map(project)
-    .filter((s) => s.trip.members.some((m) => m.id === workspace.user.id && !m.left))
+    .filter((s) =>
+      s.trip.members.some((m) => m.id === tripMemberId(workspace, s.trip.id) && !m.left),
+    )
     .sort((a, b) => b.trip.createdAt.localeCompare(a.trip.createdAt));
+}
+export function tripMemberId(workspace: Workspace, tripId: string): string {
+  return (
+    (workspace.mode === 'local' ? workspace.localTripMembers?.[tripId] : undefined) ??
+    workspace.user.id
+  );
+}
+
+export async function importLocalTrip(backup: ParsedTripBackup, memberId: string) {
+  const state = copyTrip(backup, memberId);
+  await update((current) => {
+    if (current.mode !== 'local')
+      throw new Error('Sign out before importing a trip into your local workspace.');
+    if (current.events.some((e) => e.tripId === state.trip.id))
+      throw new Error('This trip copy already exists. Open import again to make another copy.');
+    return {
+      ...current,
+      events: [...current.events, ...state.events],
+      localTripMembers: { ...current.localTripMembers, [state.trip.id]: memberId },
+    };
+  });
+  return state.trip.id;
 }
 function demoWorkspace(): Workspace {
   const user: User = {
@@ -260,7 +286,7 @@ export async function initialize() {
 export async function dispatch(tripId: string, data: EventData) {
   await update((w) => {
     const current = w.events.filter((e) => e.tripId === tripId);
-    const event = makeEvent(tripId, w.user.id, data);
+    const event = makeEvent(tripId, tripMemberId(w, tripId), data);
     const last = current.reduce((max, e) => Math.max(max, Date.parse(e.updatedAt)), 0);
     event.updatedAt = new Date(Math.max(Date.now(), last + 1)).toISOString();
     validateEvent(event, current.length ? project(current) : null);
@@ -419,6 +445,17 @@ export async function logout() {
 }
 export async function updateLocalProfile(displayName: string) {
   await update((w) => ({ ...w, user: { ...w.user, displayName } }));
+}
+export async function restoreLocalBackup(workspace: Workspace, expected: Workspace) {
+  await update((current) => {
+    if (current.mode !== 'local' || workspace.mode !== 'local' || workspace.pending.length)
+      throw new Error('Sign out before importing. Backups can only replace a local workspace.');
+    if (JSON.stringify(current) !== JSON.stringify(expected))
+      throw new Error(
+        'Your local workspace changed while reviewing this backup. Close and reopen import before trying again.',
+      );
+    return workspace;
+  });
 }
 export async function cloudAction(path: string, method: string, data: unknown) {
   if (snapshot.workspace?.pending.length) await sync();

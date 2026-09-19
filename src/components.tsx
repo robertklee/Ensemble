@@ -23,8 +23,22 @@ import {
   type Trip,
   type TripState,
 } from '../shared/types';
-import { authenticate, cloudAction, dispatch, type Workspace } from './store';
-import { exportCSV } from './export';
+import {
+  authenticate,
+  cloudAction,
+  dispatch,
+  importLocalTrip,
+  restoreLocalBackup,
+  type Workspace,
+} from './store';
+import { exportBackup, exportCSV } from './export';
+import {
+  MAX_BACKUP_BYTES,
+  parseBackup,
+  parseTripBackup,
+  type ParsedBackup,
+  type ParsedTripBackup,
+} from './backup';
 
 export function Avatar({
   name,
@@ -168,6 +182,226 @@ function useSubmit(action: () => Promise<void>) {
   }
   return { busy, error, submit, setError };
 }
+export function ImportBackupForm({
+  workspace,
+  onDone,
+  onCancel,
+}: {
+  workspace: Workspace;
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  const [original] = useState(workspace);
+  const [backup, setBackup] = useState<ParsedBackup | null>(null);
+  const [reading, setReading] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
+  const { busy, error, submit, setError } = useSubmit(async () => {
+    if (!backup || !confirmed || reading)
+      throw new Error('Choose a valid backup and confirm replacing local data.');
+    await restoreLocalBackup(backup.workspace, original);
+    onDone();
+  });
+  async function load(file?: File) {
+    setBackup(null);
+    setConfirmed(false);
+    setError('');
+    if (!file) return;
+    setReading(true);
+    try {
+      if (file.size > MAX_BACKUP_BYTES) throw new Error('Choose a JSON backup smaller than 25 MB.');
+      setBackup(await parseBackup(await file.text()));
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Could not read this backup.');
+    } finally {
+      setReading(false);
+    }
+  }
+  return (
+    <form className="form" onSubmit={submit}>
+      <p className="muted">
+        Restore an Ensemble JSON backup on this device. CSV and PDF exports cannot be imported.
+        Older unversioned JSON backups are also supported.
+      </p>
+      <label>
+        Backup file
+        <input
+          type="file"
+          accept=".json,application/json"
+          disabled={reading || busy}
+          onChange={(e) => {
+            const file = e.currentTarget.files?.[0];
+            e.currentTarget.value = '';
+            void load(file);
+          }}
+        />
+      </label>
+      {reading && <p role="status">Reading and checking your backup…</p>}
+      {backup && (
+        <>
+          <div className="info-box" role="status">
+            <strong>{backup.workspace.user.displayName}'s backup</strong>
+            <p>
+              {backup.trips} visible trips · {backup.expenses} expenses (including deleted) ·{' '}
+              {backup.deletedTrips} deleted trips · {backup.workspace.events.length} history events
+            </p>
+            {backup.sourceMode === 'cloud' && (
+              <p>
+                This shared-workspace backup becomes a local copy. Its {backup.pendingChanges}{' '}
+                pending changes are kept in the history, but nothing is uploaded. Friends,
+                notifications, and cloud sync settings are not restored.
+              </p>
+            )}
+          </div>
+          <div className="info-box warning">
+            Import replaces your entire local workspace, including your profile and existing trips.
+            It does not merge backups or change shared trips on the server. Export your current
+            workspace first if you want to keep it.
+          </div>
+          <label className="check-label">
+            <input
+              type="checkbox"
+              checked={confirmed}
+              disabled={busy}
+              onChange={(e) => setConfirmed(e.target.checked)}
+            />
+            Replace my local workspace with this backup
+          </label>
+        </>
+      )}
+      <ErrorText error={error} />
+      <button type="button" className="button secondary" onClick={() => exportBackup(workspace)}>
+        <Download size={17} />
+        Export current workspace first
+      </button>
+      <div className="form-footer">
+        <button type="button" className="button secondary" disabled={busy} onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          className="button primary"
+          type="submit"
+          disabled={!backup || !confirmed || reading || busy}
+        >
+          {busy ? 'Restoring…' : 'Import backup'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+export function ImportTripForm({
+  workspace,
+  onDone,
+  onCancel,
+}: {
+  workspace: Workspace;
+  onDone: (tripId: string) => void;
+  onCancel: () => void;
+}) {
+  const [backup, setBackup] = useState<ParsedTripBackup | null>(null);
+  const [memberId, setMemberId] = useState('');
+  const [reading, setReading] = useState(false);
+  const { busy, error, submit, setError } = useSubmit(async () => {
+    if (!backup || reading) throw new Error('Choose a valid trip JSON file first.');
+    onDone(await importLocalTrip(backup, memberId));
+  });
+  async function load(file?: File) {
+    setBackup(null);
+    setMemberId('');
+    setError('');
+    if (!file) return;
+    setReading(true);
+    try {
+      if (file.size > MAX_BACKUP_BYTES) throw new Error('Choose a JSON backup smaller than 25 MB.');
+      const parsed = await parseTripBackup(await file.text());
+      setBackup(parsed);
+      setMemberId(
+        parsed.state.trip.members.some(
+          (m) => m.id === parsed.exportedBy.id && !m.left && !m.isGhost,
+        )
+          ? parsed.exportedBy.id
+          : parsed.state.trip.createdBy,
+      );
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Could not read this trip.');
+    } finally {
+      setReading(false);
+    }
+  }
+  if (workspace.mode !== 'local')
+    return (
+      <p className="info-box">
+        Sign out to import a trip into your local workspace. Imports never upload history or
+        overwrite shared trips. You can export any shared trip from its Export menu.
+      </p>
+    );
+  return (
+    <form className="form" onSubmit={submit}>
+      <p className="muted">
+        Add an independent local copy from a trip's Download JSON export. Existing trips and your
+        profile stay unchanged. Nothing is uploaded.
+      </p>
+      <label>
+        Trip JSON file
+        <input
+          type="file"
+          accept=".json,application/json"
+          disabled={reading || busy}
+          onChange={(e) => {
+            const file = e.currentTarget.files?.[0];
+            e.currentTarget.value = '';
+            void load(file);
+          }}
+        />
+      </label>
+      {reading && <p role="status">Reading and checking your trip…</p>}
+      {backup && (
+        <>
+          <div className="info-box" role="status">
+            <strong>{backup.state.trip.name}</strong>
+            <p>
+              {backup.state.trip.members.length} participants · {backup.state.expenses.length}{' '}
+              expenses (including deleted) · {backup.state.settlements.length} payments ·{' '}
+              {backup.state.trip.status}
+            </p>
+            <p>Receipts, comments, and full edit history are included.</p>
+          </div>
+          <label>
+            View and edit this local copy as
+            <select value={memberId} disabled={busy} onChange={(e) => setMemberId(e.target.value)}>
+              {backup.state.trip.members
+                .filter((m) => !m.left && !m.isGhost)
+                .map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                    {m.role === 'organizer' ? ' (organizer)' : ''}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <p className="footnote">
+            Choose an existing non-placeholder participant. Their balances and permissions are
+            preserved in this copy; this does not sign you into their account.
+          </p>
+        </>
+      )}
+      <ErrorText error={error} />
+      <div className="form-footer">
+        <button type="button" className="button secondary" disabled={busy} onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          className="button primary"
+          type="submit"
+          disabled={!backup || !memberId || reading || busy}
+        >
+          {busy ? 'Importing…' : 'Import trip'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 export function DeleteTripForm({
   state,
   workspace,

@@ -3,7 +3,267 @@ import { readFile } from 'node:fs/promises';
 import { makeEvent, project } from '../../shared/events';
 import { balances } from '../../shared/money';
 import type { TripEvent, User } from '../../shared/types';
-import { fixture } from '../fixtures';
+import { expense, fixture, withEvent } from '../fixtures';
+import type { Workspace } from '../../src/store';
+import { serializeTrip } from '../../src/backup';
+
+const importedWorkspace: Workspace = {
+  mode: 'local',
+  user: { id: 'u0', username: 'alice', displayName: 'Alice', defaultCurrency: 'USD' },
+  events: fixture(2).events,
+  pending: [],
+  friends: [],
+  notices: [],
+  lastSynced: null,
+};
+
+async function selectTripFile(page: Page, text: string) {
+  await page.getByLabel('Trip JSON file').setInputFiles({
+    name: 'trip.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(text),
+  });
+}
+
+test('individual trip JSON adds independent editable copies and survives offline reload', async ({
+  page,
+  context,
+}) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download JSON', exact: false }).click();
+  const file = await download;
+  expect(file.suggestedFilename()).toBe('Lisbon-with-love.json');
+  const saved = JSON.parse(await readFile((await file.path())!, 'utf8'));
+  expect(saved).toMatchObject({ format: 'ensemble-trip', version: 1, tripId: 'sample-lisbon' });
+  expect(saved.events.every((e: TripEvent) => e.tripId === 'sample-lisbon')).toBe(true);
+  expect(saved).not.toHaveProperty('workspace');
+
+  const initial = fixture(2);
+  const source = withEvent(initial, { kind: 'expense.add', expense: expense(initial) });
+  const text = serializeTrip(source, importedWorkspace.user);
+  await page.getByRole('button', { name: 'Your account' }).click();
+  await page.getByRole('button', { name: 'Import trip JSON', exact: true }).last().click();
+  await selectTripFile(page, text);
+  await expect(
+    page.getByRole('combobox', { name: 'View and edit this local copy as' }),
+  ).toHaveValue('u0');
+  await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
+  await context.setOffline(true);
+  await page.getByRole('button', { name: 'Import trip', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Weekend Cabin', exact: true })).toBeVisible();
+  await expect(page.getByText('Local copy · viewing as Alice')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Lisbon, with love', exact: true })).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: 'Weekend Cabin', exact: true }).click();
+  await expect(page.getByText('Local copy · viewing as Alice')).toBeVisible();
+  await page.getByRole('button', { name: 'Add expense', exact: true }).first().click();
+  await page.getByLabel('What was it for?').fill('Imported trip coffee');
+  await page.getByLabel('Amount', { exact: true }).fill('10');
+  await page.getByRole('button', { name: 'Add expense', exact: true }).last().click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByText('Imported trip coffee', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Your account' }).click();
+  await expect(page.getByRole('dialog').getByRole('heading', { name: 'Alex' })).toBeVisible();
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await page.getByRole('button', { name: 'Import trip JSON', exact: true }).first().click();
+  await selectTripFile(page, text);
+  await page.getByRole('button', { name: 'Import trip', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Weekend Cabin', exact: true })).toHaveCount(2);
+  await expect(page.getByText('Imported trip coffee', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Lisbon, with love', exact: true }).click();
+  await expect(page.getByText('Imported trip coffee', { exact: true })).toHaveCount(0);
+  await context.setOffline(false);
+});
+
+test('trip JSON invalid files, cancellation and storage errors do not change existing trips', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Import trip JSON', exact: true }).first().click();
+  await selectTripFile(page, 'not JSON');
+  await expect(page.getByRole('dialog').getByRole('alert')).toContainText('not valid JSON');
+  await expect(page.getByRole('button', { name: 'Import trip', exact: true })).toBeDisabled();
+  const text = serializeTrip(project(importedWorkspace.events), importedWorkspace.user);
+  await selectTripFile(page, text);
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Weekend Cabin', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Import trip JSON', exact: true }).first().click();
+  await selectTripFile(page, text);
+  await page.evaluate(() => {
+    const put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (value, key) {
+      if (key === 'local') throw new DOMException('Storage is full.', 'QuotaExceededError');
+      return put.call(this, value, key);
+    };
+  });
+  await page.getByRole('button', { name: 'Import trip', exact: true }).click();
+  await expect(page.getByRole('dialog').getByRole('alert')).toContainText('Storage is full');
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Weekend Cabin', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Lisbon, with love', exact: true })).toBeVisible();
+});
+
+test('trip JSON import keeps trips added in another tab while the preview is open', async ({
+  page,
+  context,
+}) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Import trip JSON', exact: true }).first().click();
+  await selectTripFile(
+    page,
+    serializeTrip(project(importedWorkspace.events), importedWorkspace.user),
+  );
+  await expect(
+    page.getByRole('combobox', { name: 'View and edit this local copy as' }),
+  ).toHaveValue('u0');
+  const second = await context.newPage();
+  await second.goto('/');
+  await second.getByRole('button', { name: 'Create a trip', exact: true }).first().click();
+  await second.getByLabel('Trip name').fill('Keep concurrent trip');
+  await second.getByRole('button', { name: 'Create trip', exact: true }).click();
+  await expect(second.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Import trip', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Weekend Cabin', exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Keep concurrent trip', exact: true }),
+  ).toBeVisible();
+  await second.reload();
+  await expect(second.getByRole('button', { name: 'Weekend Cabin', exact: true })).toBeVisible();
+  await second.close();
+});
+
+async function openImport(page: Page) {
+  await page.getByRole('button', { name: 'Your account' }).click();
+  await page.getByRole('button', { name: 'Import JSON backup' }).click();
+}
+
+async function selectBackup(page: Page, text: string) {
+  await page.getByLabel('Backup file').setInputFiles({
+    name: 'ensemble-backup.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(text),
+  });
+}
+
+test('JSON backups export, preview, replace and restore the local workspace offline', async ({
+  page,
+  context,
+}) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Your account' }).click();
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export full JSON backup' }).click();
+  const text = await readFile((await (await download).path())!, 'utf8');
+  const saved = JSON.parse(text);
+  expect(saved).toMatchObject({ format: 'ensemble-backup', version: 1 });
+  await page.getByRole('button', { name: 'Import JSON backup' }).click();
+  await selectBackup(page, JSON.stringify(importedWorkspace));
+  await expect(page.getByText("Alice's backup")).toBeVisible();
+  const submit = page.getByRole('button', { name: 'Import backup', exact: true });
+  await expect(submit).toBeDisabled();
+  await page.getByLabel('Replace my local workspace with this backup').check();
+  await submit.click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Weekend Cabin', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Lisbon, with love', exact: true })).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Weekend Cabin', exact: true })).toBeVisible();
+  await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
+  await context.setOffline(true);
+  await openImport(page);
+  await selectBackup(page, text);
+  await page.getByLabel('Replace my local workspace with this backup').check();
+  await page.getByRole('button', { name: 'Import backup', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Lisbon, with love', exact: true })).toBeVisible();
+  const restored = await page.evaluate(
+    () =>
+      new Promise((resolve, reject) => {
+        const request = indexedDB.open('ensemble', 1);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const db = request.result;
+          const read = db.transaction('workspace').objectStore('workspace').get('local');
+          read.onsuccess = () => {
+            resolve(read.result);
+            db.close();
+          };
+          read.onerror = () => {
+            reject(read.error);
+            db.close();
+          };
+        };
+      }),
+  );
+  expect(restored).toEqual(saved.workspace);
+  await context.setOffline(false);
+});
+
+test('JSON backup errors and cancellation leave existing trips intact', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto('/');
+  await openImport(page);
+  await selectBackup(page, 'not JSON');
+  await expect(page.getByRole('alert')).toContainText('not valid JSON');
+  await expect(page.getByRole('button', { name: 'Import backup', exact: true })).toBeDisabled();
+  await selectBackup(page, JSON.stringify(importedWorkspace));
+  await expect(page.getByText("Alice's backup")).toBeVisible();
+  expect(
+    await page.getByRole('dialog').evaluate((dialog) => dialog.scrollWidth <= dialog.clientWidth),
+  ).toBe(true);
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Lisbon, with love', exact: true })).toBeVisible();
+});
+
+test('JSON backup storage failure does not replace existing trips', async ({ page }) => {
+  await page.goto('/');
+  await openImport(page);
+  await selectBackup(page, JSON.stringify(importedWorkspace));
+  await expect(page.getByText("Alice's backup")).toBeVisible();
+  await page.evaluate(() => {
+    const put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (value, key) {
+      if (key === 'local') throw new DOMException('Storage is full.', 'QuotaExceededError');
+      return put.call(this, value, key);
+    };
+  });
+  await page.getByLabel('Replace my local workspace with this backup').check();
+  await page.getByRole('button', { name: 'Import backup', exact: true }).click();
+  await expect(page.getByRole('dialog').getByRole('alert')).toContainText('Storage is full');
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Lisbon, with love', exact: true })).toBeVisible();
+});
+
+test('JSON backup import refuses to overwrite changes made in another tab', async ({
+  page,
+  context,
+}) => {
+  await page.goto('/');
+  await openImport(page);
+  await selectBackup(page, JSON.stringify(importedWorkspace));
+  await expect(page.getByText("Alice's backup")).toBeVisible();
+  const second = await context.newPage();
+  await second.goto('/');
+  await second.getByRole('button', { name: 'Create a trip', exact: true }).first().click();
+  await second.getByLabel('Trip name').fill('Keep this trip');
+  await second.getByRole('button', { name: 'Create trip', exact: true }).click();
+  await expect(second.getByRole('dialog')).toHaveCount(0);
+  await page.getByLabel('Replace my local workspace with this backup').check();
+  await page.getByRole('button', { name: 'Import backup', exact: true }).click();
+  await expect(page.getByRole('dialog').getByRole('alert')).toContainText('workspace changed');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Keep this trip', exact: true })).toBeVisible();
+  await second.close();
+});
 
 const origin = 'http://127.0.0.1:8788';
 test('Cloudflare serves static assets, SPA routes and API routes separately', async ({
@@ -747,13 +1007,13 @@ test('Cloudflare accounts, privacy, friendship, invites, concurrent edits and tr
     const backupDownload = page.waitForEvent('download');
     await page.getByRole('button', { name: 'Export full JSON backup' }).click();
     const backup = JSON.parse(await readFile((await (await backupDownload).path())!, 'utf8')) as {
-      events: TripEvent[];
-      pending: string[];
+      workspace: Workspace;
     };
-    expect(backup.pending).toHaveLength(1);
-    expect(backup.events.some((e) => e.kind === 'trip.delete')).toBe(true);
+    await expect(page.getByRole('button', { name: 'Import JSON backup' })).toBeDisabled();
+    expect(backup.workspace.pending).toHaveLength(1);
+    expect(backup.workspace.events.some((e) => e.kind === 'trip.delete')).toBe(true);
     expect(
-      backup.events.some(
+      backup.workspace.events.some(
         (e) => e.kind === 'expense.add' && e.expense.description === 'Offline after trip deletion',
       ),
     ).toBe(true);

@@ -43,6 +43,7 @@ import {
   Utensils,
   Wallet,
   WifiOff,
+  Upload,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -70,11 +71,13 @@ import {
   ErrorText,
   ExpenseForm,
   InvitePanel,
+  ImportBackupForm,
+  ImportTripForm,
   Modal,
   PaymentForm,
   TripForm,
 } from './components';
-import { exportBackup, exportCSV, printTrip } from './export';
+import { exportBackup, exportCSV, exportTripJSON, printTrip } from './export';
 import {
   clearError,
   cloudAction,
@@ -85,6 +88,7 @@ import {
   showError,
   sync,
   tripStates,
+  tripMemberId,
   useWorkspace,
   type Workspace,
 } from './store';
@@ -106,6 +110,8 @@ type ModalState =
         | 'auth'
         | 'invite'
         | 'export'
+        | 'import'
+        | 'import-trip'
         | 'profile'
         | 'notices'
         | 'help'
@@ -189,7 +195,7 @@ export default function App() {
         ? null
         : current,
     );
-    if (deletion.actor !== workspace?.user.id)
+    if (workspace && deletion.actor !== tripMemberId(workspace, deletion.tripId))
       setMessage('This trip was deleted by its organizer.');
   }, [workspace, selected]);
   useEffect(() => {
@@ -248,11 +254,24 @@ export default function App() {
       </div>
     );
   const currency = state?.trip.baseCurrency ?? workspace.user.defaultCurrency;
+  const activeMember = state?.trip.members.find(
+    (m) => m.id === tripMemberId(workspace, state.trip.id),
+  );
+  const tripWorkspace: Workspace =
+    workspace.mode === 'local' &&
+    state &&
+    workspace.localTripMembers?.[state.trip.id] &&
+    activeMember
+      ? {
+          ...workspace,
+          user: { ...workspace.user, id: activeMember.id, displayName: activeMember.name },
+        }
+      : workspace;
   const expenses = state?.expenses.filter((e) => !e.deletedAt) ?? [];
   const total = nets.reduce((sum, b) => sum + b.paid, 0);
-  const you = nets.find((b) => b.userId === workspace.user.id);
+  const you = nets.find((b) => b.userId === tripWorkspace.user.id);
   const currentMembers = state?.trip.members.filter((m) => !m.left) ?? [];
-  const organizer = state?.trip.createdBy === workspace.user.id;
+  const organizer = state?.trip.createdBy === tripWorkspace.user.id;
   const closed = state?.trip.status === 'closed';
   const filteredExpenses = (state?.expenses ?? [])
     .filter(
@@ -452,6 +471,10 @@ export default function App() {
         <button className="new-trip-link" onClick={() => setModal({ kind: 'trip' })}>
           <Plus size={16} />
           Create a new trip
+        </button>
+        <button className="new-trip-link" onClick={() => setModal({ kind: 'import-trip' })}>
+          <Upload size={16} />
+          Import trip JSON
         </button>
         <div className="sidebar-bottom">
           <div className="sidebar-note">
@@ -673,6 +696,11 @@ export default function App() {
                   </div>
                   <h1>{state.trip.name}</h1>
                   <p>{state.trip.description || 'A shared adventure, a simple way to split it.'}</p>
+                  {workspace.mode === 'local' && workspace.localTripMembers?.[state.trip.id] && (
+                    <p className="footnote">
+                      Local copy · viewing as {tripWorkspace.user.displayName}
+                    </p>
+                  )}
                 </div>
                 <div className="heading-actions">
                   <button className="button secondary" onClick={() => setModal({ kind: 'export' })}>
@@ -838,7 +866,7 @@ export default function App() {
                                 <ExpenseRow
                                   expense={item.expense}
                                   state={state}
-                                  workspace={workspace}
+                                  workspace={tripWorkspace}
                                   onClick={() => setModal({ kind: 'detail', id: item.id })}
                                 />
                               ) : (
@@ -930,7 +958,9 @@ export default function App() {
                         {currentMembers.slice(0, 5).map((m, i) => (
                           <div key={m.id}>
                             <Avatar name={m.name} index={i} size="small" />
-                            <span>{m.id === workspace.user.id ? `${m.name} (you)` : m.name}</span>
+                            <span>
+                              {m.id === tripWorkspace.user.id ? `${m.name} (you)` : m.name}
+                            </span>
                             {m.role === 'organizer' && <small>Organizer</small>}
                           </div>
                         ))}
@@ -968,7 +998,7 @@ export default function App() {
                             <span>
                               <Avatar name={memberName(state, b.userId)} index={i} size="small" />
                               <strong>
-                                {b.userId === workspace.user.id
+                                {b.userId === tripWorkspace.user.id
                                   ? 'You'
                                   : memberName(state, b.userId)}
                               </strong>
@@ -1239,7 +1269,7 @@ export default function App() {
                           <div>
                             <strong>
                               {m.name}
-                              {m.id === workspace.user.id && ' (you)'}
+                              {m.id === tripWorkspace.user.id && ' (you)'}
                             </strong>
                             <small>
                               {m.left
@@ -1347,7 +1377,7 @@ export default function App() {
                               void run(async () => {
                                 await dispatch(state.trip.id, {
                                   kind: 'member.leave',
-                                  userId: workspace.user.id,
+                                  userId: tripWorkspace.user.id,
                                 });
                                 choose(null);
                               }, 'You left the trip.');
@@ -1430,7 +1460,7 @@ export default function App() {
           {modal.kind === 'delete-trip' && state && (
             <DeleteTripForm
               state={state}
-              workspace={workspace}
+              workspace={tripWorkspace}
               onCancel={close}
               onDone={() => {
                 choose(null);
@@ -1455,7 +1485,7 @@ export default function App() {
           {modal.kind === 'expense' && state && (
             <ExpenseForm
               state={state}
-              workspace={workspace}
+              workspace={tripWorkspace}
               initial={modal.initial}
               onDone={() =>
                 done(
@@ -1474,7 +1504,7 @@ export default function App() {
           {modal.kind === 'invite' && state && (
             <InvitePanel
               state={state}
-              workspace={workspace}
+              workspace={tripWorkspace}
               onDone={() => done('Your travel crew just grew.')}
               onAuth={() => setModal({ kind: 'auth' })}
             />
@@ -1483,13 +1513,30 @@ export default function App() {
             <ExpenseDetail
               state={state}
               id={modal.id}
-              workspace={workspace}
+              workspace={tripWorkspace}
               onEdit={(initial) => setModal({ kind: 'expense', initial })}
               onDone={done}
             />
           )}
           {modal.kind === 'export' && state && (
             <div className="form export-options">
+              <button
+                onClick={() => {
+                  exportTripJSON(state, tripWorkspace.user);
+                  done('Trip JSON exported.');
+                }}
+              >
+                <span className="export-icon">
+                  <FileText size={25} />
+                </span>
+                <span>
+                  <strong>Download JSON</strong>
+                  <small>
+                    This trip only, with receipts and full history. Import as a local copy.
+                  </small>
+                </span>
+                <Download size={18} />
+              </button>
               <button
                 onClick={() => {
                   exportCSV(state);
@@ -1524,10 +1571,31 @@ export default function App() {
                 <ArrowUpRight size={18} />
               </button>
               <p className="footnote">
-                Exports include all non-deleted expenses, not just the current filters. Pending
-                offline changes are included.
+                CSV and PDF include all non-deleted expenses, not just the current filters. JSON
+                also includes deleted expenses and full history. Pending offline changes are
+                included. JSON files contain private financial data and receipts.
               </p>
             </div>
+          )}
+          {modal.kind === 'import' && (
+            <ImportBackupForm
+              workspace={workspace}
+              onCancel={close}
+              onDone={() => {
+                choose(null);
+                done('Backup imported into your local workspace.');
+              }}
+            />
+          )}
+          {modal.kind === 'import-trip' && (
+            <ImportTripForm
+              workspace={workspace}
+              onCancel={close}
+              onDone={(id) => {
+                choose(id);
+                done('Trip imported as a separate local copy.');
+              }}
+            />
           )}
           {modal.kind === 'profile' && (
             <div className="form">
@@ -1592,6 +1660,27 @@ export default function App() {
                 <Download size={17} />
                 Export full JSON backup
               </button>
+              <button
+                className="button secondary"
+                onClick={() => setModal({ kind: 'import-trip' })}
+              >
+                <Upload size={17} />
+                Import trip JSON
+              </button>
+              <button
+                className="button secondary"
+                disabled={workspace.mode !== 'local' || busy || syncing}
+                onClick={() => setModal({ kind: 'import' })}
+              >
+                <Upload size={17} />
+                Import JSON backup
+              </button>
+              {workspace.mode === 'cloud' && (
+                <p className="footnote">
+                  Sign out to import a backup into your local workspace. Shared trips are never
+                  overwritten by an import.
+                </p>
+              )}
               {workspace.mode === 'cloud' && (
                 <button
                   className="text-button"
@@ -1781,7 +1870,7 @@ export default function App() {
             <MergePanel
               ghostId={modal.ghostId}
               state={state}
-              workspace={workspace}
+              workspace={tripWorkspace}
               onDone={() => done('Placeholder merged. Balances moved to the account.')}
             />
           )}
@@ -1918,6 +2007,10 @@ function modalTitle(modal: ModalState, state?: TripState) {
       return state?.expenses.find((e) => e.id === modal.id)?.description ?? 'Expense details';
     case 'export':
       return 'Take the numbers with you';
+    case 'import':
+      return 'Restore a backup';
+    case 'import-trip':
+      return 'Import a trip';
     case 'profile':
       return 'Your workspace';
     case 'notices':
